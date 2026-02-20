@@ -1,0 +1,57 @@
+theme = "doom-one"
+
+[editor]
+mouse = false
+auto-format = false
+workspace-lsp-roots = ['.']
+
+[editor.soft-wrap]
+enable = true
+
+[editor.auto-save]
+focus-lost = true
+after-delay.enable = true
+after-delay.timeout = 2000
+
+[editor.cursor-shape]
+insert = "bar"
+normal = "block"
+select = "underline"
+
+[editor.file-picker]
+hidden = false
+
+[editor.inline-diagnostics]
+cursor-line = "disable"
+other-lines = "disable"
+
+[keys.normal."space".u]
+d = [
+  ":toggle inline-diagnostics.cursor-line warning disable",
+  ":toggle inline-diagnostics.other-lines disable warning",
+  ":toggle end-of-line-diagnostics disable warning",
+]
+
+[keys.normal]
+"$" = "extend_to_line_end"
+"^" = "extend_to_line_start"
+"A-h" = "jump_view_left"
+"A-j" = "jump_view_down"
+"A-k" = "jump_view_up"
+"A-l" = "jump_view_right"
+"del" = "delete_char_forward"
+
+[keys.select]
+"$" = "extend_to_line_end"
+"^" = "extend_to_line_start"
+"A-h" = "jump_view_left"
+"A-j" = "jump_view_down"
+"A-k" = "jump_view_up"
+"A-l" = "jump_view_right"
+
+[keys.insert]
+"A-h" = "jump_view_left"
+"A-j" = "jump_view_down"
+"A-k" = "jump_view_up"
+"A-l" = "jump_view_right"
+
