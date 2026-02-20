@@ -1,6 +1,6 @@
 # tmux-side-bar
 
-A utility script to toggle a LHS tmux pane as if it were a IDE side bar.
+A utility script to toggle a LHS tmux pane as if it were a IDE file tree.
 
 ## installation
 
@@ -9,6 +9,7 @@ A utility script to toggle a LHS tmux pane as if it were a IDE side bar.
 3. Update `~/.tmux.conf`
   - a. Add a key bind
 
+  ###### NOTE: .customrc in this example sets config env vars
   ```
   bind -n M-e run-shell -b 'zsh -f -c "source ~/.customrc; ~/bin/toggle_file_viewer" >>/tmp/tmux-side-bar.log 2>&1'
   ```
@@ -25,5 +26,9 @@ A utility script to toggle a LHS tmux pane as if it were a IDE side bar.
 Values are picked up from the following env vars
 
 ```
+# The file tree progem to run when the pane opens
 FILE_TREE_VIEWER=<progam>
+
+# The EDITOR to use when opening a file
+FILE_TREE_OPENER=<program>
 ```

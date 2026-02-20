@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+hx_cmd="${HX_CMD:-hx}"
+fallback="${OPENER_FALLBACK:-}"
+
+# Log location (override with LOG_FILE env var)
+LOG_FILE="${LOG_FILE:-/tmp/opener.log}"
+DEBUG="${DEBUG:-0}"
+
+mkdir -p "$(dirname "$LOG_FILE")"
+
+ts() { date '+%Y-%m-%d %H:%M:%S%z'; }
+
+log() {
+  # shellcheck disable=SC2129
+  echo "[$(ts)] $*" >>"$LOG_FILE"
+}
+
+dbg() {
+  if [[ "$DEBUG" == "1" ]]; then
+    log "DEBUG: $*"
+  fi
+}
+
+die() {
+  log "ERROR: $*"
+  printf 'editor: %s\n' "$*" >&2
+  exit 1
+}
+
+run() {
+  # Run a command, log it, and ALSO pass through stdout so callers can capture/pipe it.
+  dbg "RUN: $*"
+  local out rc
+  rc=0
+  out="$("$@" 2>&1)" || rc=$?
+
+  if [[ -n "${out:-}" ]]; then
+    dbg "OUT: $out"
+  fi
+  if [[ "$rc" != "0" ]]; then
+    dbg "RC: $rc"
+    printf '%s\n' "$out" >&2
+  else
+    printf '%s\n' "$out"
+  fi
+
+  return "$rc"
+}
+
+is_text_editable() {
+  local p="$1"
+
+  # New file: treat as text
+  [[ -e "$p" ]] || return 0
+  [[ -f "$p" ]] || return 1
+
+  local mt
+  mt="$(file --brief --mime-type -- "$p" 2>/dev/null || true)"
+  dbg "file mime-type for '$p' => '$mt'"
+
+  case "$mt" in
+    text/*) return 0 ;;
+    inode/x-empty) return 0 ;;
+    application/json|application/xml|application/x-empty|application/javascript) return 0 ;;
+    application/x-shellscript|application/x-yaml|application/yaml) return 0 ;;
+    application/toml|application/x-toml) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+tmux_has_pane() {
+  local pane="$1"
+  # Support either pane_id (%3) or pane_target (session:win.pane)
+  run tmux list-panes -a -F '#{pane_id} #{pane_target}' | awk -v p="$pane" '
+    $1==p {found=1}
+    $2==p {found=1}
+    END{exit found?0:1}'
+}
+
+pane_current_cmd() {
+  local pane="$1"
+  run tmux display-message -p -t "$pane" '#{pane_current_command}'
+}
+
+pane_pid() {
+  local pane="$1"
+  run tmux display-message -p -t "$pane" '#{pane_pid}'
+}
+
+tmux_send_literal() {
+  local pane="$1"; shift
+  dbg "send-keys -l to $pane: $*"
+  run tmux send-keys -t "$pane" -l -- "$*"
+}
+
+tmux_send_key() {
+  local pane="$1"; shift
+  dbg "send-keys to $pane: $*"
+  run tmux send-keys -t "$pane" "$@"
+}
+
+resolve_path() {
+  local path="$1"
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m -- "$path" 2>/dev/null || printf '%s' "$path"
+  else
+    printf '%s' "$path"
+  fi
+}
+
+open_in_running_helix() {
+  local pane="$1"
+  local path="$2"
+  local p
+  p="$(resolve_path "$path")"
+
+  log "Action: open_in_running_helix pane=$pane path=$p"
+
+  # Switch to normal mode, then command mode
+  tmux_send_key "$pane" Escape
+  tmux_send_literal "$pane" ":open $p"
+  tmux_send_key "$pane" Enter
+  tmux select-pane -t "$pane"
+}
+
+start_helix_in_pane() {
+  local pane="$1"
+  local path="$2"
+  local p
+  p="$(resolve_path "$path")"
+
+  log "Action: start_helix_in_pane pane=$pane path=$p hx_cmd=$hx_cmd"
+
+  # If there's a running program, this will type into it.
+  # You can optionally send C-c first if you want.
+  tmux_send_literal "$pane" "$hx_cmd "
+  tmux_send_literal "$pane" "$p"
+  tmux_send_key "$pane" Enter
+}
+
+main() {
+  log "------------------------------"
+  log "Invoked: $0 $*"
+  log "Env: TMUX='${TMUX:-}' PARENT_PANE='${PARENT_PANE:-}' HX_CMD='$hx_cmd' DEBUG='$DEBUG' LOG_FILE='$LOG_FILE'"
+
+  [[ $# -ge 1 ]] || die "usage: $0 <path> [<path> ...]"
+
+  # If not inside tmux or missing parent pane, run hx locally
+  if [[ -z "${TMUX:-}" ]]; then
+    log "TMUX not set; exec locally: $hx_cmd $*"
+    exec "$hx_cmd" "$@"
+  fi
+  if [[ -z "${PARENT_PANE:-}" ]]; then
+    log "PARENT_PANE not set; exec locally: $hx_cmd $*"
+    exec "$hx_cmd" "$@"
+  fi
+
+  local pane="$PARENT_PANE"
+  if ! tmux_has_pane "$pane"; then
+    die "PARENT_PANE '$pane' is not a valid tmux pane target"
+  fi
+
+  local cmd pid
+  cmd="$(pane_current_cmd "$pane" || true)"
+  pid="$(pane_pid "$pane" || true)"
+  log "Target pane: $pane pane_current_command='${cmd:-}' pane_pid='${pid:-}'"
+
+  local first=1
+  for path in "$@"; do
+    log "Processing arg: '$path'"
+
+    if ! is_text_editable "$path"; then
+      log "Not text-editable: '$path'"
+      if [[ -n "$fallback" ]]; then
+        log "Fallback exec: $fallback -- '$path'"
+        exec $fallback -- "$path"
+      fi
+      die "not a text-editable file: $path (set OPENER_FALLBACK to handle these)"
+    fi
+
+    # Refresh command each time: the pane might have changed.
+    cmd="$(pane_current_cmd "$pane" || true)"
+    log "Pane command before open: '${cmd:-}' (arg='$path')"
+
+    if [[ "$cmd" == "hx" || "$cmd" == "helix" ]]; then
+      open_in_running_helix "$pane" "$path"
+    else
+      start_helix_in_pane "$pane" "$path"
+    fi
+
+    first=0
+  done
+
+  log "Done."
+}
+
+main "$@"
