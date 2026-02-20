@@ -1,0 +1,72 @@
+#!/bin/zsh
+set -ex
+
+IFS=','
+
+width=30
+
+pane_exists() {
+  tmux list-panes -F '#{pane_id}' | awk -v id="$1" '$1==id { found=1 } END { exit !found }'
+}
+
+pane_to_left() {
+  tmux list-panes -F "#{pane_id} #{pane_left} #{pane_right}" |
+  awk -v cur_left="$(tmux display-message -p "#{pane_left}")" \
+      'cur_left==($3+2) { print $1 ; exit}'
+}
+
+shared_lhs_panes() {
+  tmux list-panes -F "#{pane_id} #{pane_left} #{pane_right}" |
+  awk -v cur_left="$(tmux display-message -p "#{pane_left}")" \
+      -v cur_id="$(tmux display-message -p "#{pane_id}")" \
+      'cur_id!=$1 && cur_left==$2 { print $1 }'
+}
+
+read viewer_pane parent_pane pane_left pane_right pane_top pane_bottom window_height window_width <<< \
+  "$(tmux display-message -p "#{@viewer_pane},#{@parent_pane},#{pane_left},#{pane_right},#{pane_top},#{pane_bottom},#{window_height},#{window_width}")"
+
+if [[ -n "$viewer_pane" ]] && pane_exists "$viewer_pane"; then
+  echo "parent_pane: '$parent_pane'" >> ~/.tmux/hook.log
+  tmux kill-pane -t "$viewer_pane"
+  tmux set-option -p -t "$parent_pane" -u @viewer_pane
+
+  if (( pane_right == window_width - 1 )); then
+    echo "moveing right pane: '$parent_pane'" >> ~/.tmux/hook.log
+    tmux resize-pane -t "$parent_pane" -L $((width + 1))
+  elif (( pane_left == 0 )); then
+    echo 'doing nothing'
+    :
+  else
+    left_pane=$(pane_to_left)
+    shared_lhs_panes=$(shared_lhs_panes)
+    if [[ -n $left_pane && -z $shared_lhs_panes ]]; then
+      echo "moving left pane: '$left_pane'" >> ~/.tmux/hook.log
+      tmux resize-pane -t "$left_pane" -L $((width + 1))
+    fi
+  fi
+
+else
+
+  IFS=, read parent_pane pane_left pane_top pane_bottom window_height <<< \
+    "$(tmux display-message -p "#{pane_id},#{pane_left},#{pane_top},#{pane_bottom},#{window_height}")"
+
+  TOGGLE_PATH="$(realpath "$(command -v -- "$0")")"
+
+  new_pane="$(
+    tmux split-window -h -b -P -F '#{pane_id}' -l "$width" \
+      -c '#{pane_current_path}' \
+      -e "PARENT_PANE=$parent_pane" \
+      -e "EDITOR=$FILE_TREE_EDITOR" \
+      -e "ON_EXIT=$TOGGLE_PATH" \
+      ${FILE_TREE_VIEWER:=bt}
+      # 'sh -lc "echo PARENT_PANE=$PARENT_PANE; echo on_exit=$ON_EXIT; read -r _"'
+  )"
+  # 'sh -lc "echo PARENT_PANE=$PARENT_PANE; echo EDITOR=$EDITOR; read -r _"'
+  tmux set-option -p -t "$parent_pane" @viewer_pane "$new_pane"
+  tmux set-option -p -t "$parent_pane" @parent_pane "$parent_pane"
+
+  tmux set-option -p -t "$new_pane" @viewer_pane "$new_pane"
+  tmux set-option -p -t "$new_pane" @parent_pane "$parent_pane"
+  tmux set-option -p -t "$new_pane" @dependant_pane "$parent_pane"
+fi
+
