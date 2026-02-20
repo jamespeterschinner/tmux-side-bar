@@ -4,13 +4,21 @@ A utility script to toggle a LHS tmux pane as if it were a IDE side bar.
 
 ## installation
 
-1. Make the scipt executable
-2. Put it on your path
-3. Add a key bind to your `~/.tmux.conf` to call the script
+1. Make both scipts executable
+2. Put them on your path
+3. Update `~/.tmux.conf`
+  - a. Add a key bind
 
-```
-bind -n M-e run-shell -b 'zsh -f -c "source ~/.customrc; ~/bin/toggle_file_viewer" >>/tmp/tmux-side-bar.log 2>&1'
-```
+  ```
+  bind -n M-e run-shell -b 'zsh -f -c "source ~/.customrc; ~/bin/toggle_file_viewer" >>/tmp/tmux-side-bar.log 2>&1'
+  ```
+
+  - b. Configure clean up script when panes close
+  ```
+  set-hook -g after-kill-pane 'run-shell -b ~/.tmux/kill-orphaned-panes'
+  set-hook -g pane-died 'run-shell -b ~/.tmux/kill-orphanen-panes'
+  set-hook -g pane-exited 'run-shell -b ~/.tmux/kill-orphaned-panes'
+  ```
 
 ## config
 

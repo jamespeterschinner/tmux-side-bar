@@ -1,0 +1,35 @@
+#!/usr/bin/env sh
+set -eu
+
+# Output format: pane_id<TAB>@dependant_pane
+tmux list-panes -F "#{pane_id},#{@dependant_pane}" \
+  | awk -F',' '
+      {
+        pane_id = $1
+        dep     = $2
+
+        # Record all existing pane IDs
+        exists[pane_id] = 1
+
+        # Keep the line so we can do a second pass once exists[] is complete
+        lines[NR] = pane_id "\t" dep
+        n = NR
+      }
+      END {
+        for (i = 1; i <= n; i++) {
+          split(lines[i], a, "\t")
+          pane_id = a[1]
+          dep     = a[2]
+
+          # If dep is set and does not exist anymore, the pane is orphaned -> kill it
+          if (dep != "" && !(dep in exists)) {
+            print pane_id
+          }
+        }
+      }
+    ' \
+  | while IFS= read -r orphan; do
+      [ -n "$orphan" ] || continue
+      tmux kill-pane -t "$orphan"
+    done
+
