@@ -5,6 +5,12 @@ IFS=','
 
 width=30
 
+# Log location (override with TMUX_SIDE_BAR_LOG). Ensure the dir exists and
+# never let a logging failure abort the script (set -e is on).
+LOG_FILE="${TMUX_SIDE_BAR_LOG:-$HOME/.tmux/hook.log}"
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+log() { echo "$*" >> "$LOG_FILE" 2>/dev/null || true; }
+
 pane_exists() {
   tmux list-panes -F '#{pane_id}' | awk -v id="$1" '$1==id { found=1 } END { exit !found }'
 }
@@ -26,12 +32,12 @@ read viewer_pane parent_pane pane_left pane_right pane_top pane_bottom window_he
   "$(tmux display-message -p "#{@viewer_pane},#{@parent_pane},#{pane_left},#{pane_right},#{pane_top},#{pane_bottom},#{window_height},#{window_width}")"
 
 if [[ -n "$viewer_pane" ]] && pane_exists "$viewer_pane"; then
-  echo "parent_pane: '$parent_pane'" >> ~/.tmux/hook.log
+  log "parent_pane: '$parent_pane'"
   tmux kill-pane -t "$viewer_pane"
   tmux set-option -p -t "$parent_pane" -u @viewer_pane
 
   if (( pane_right == window_width - 1 )); then
-    echo "moveing right pane: '$parent_pane'" >> ~/.tmux/hook.log
+    log "moving right pane: '$parent_pane'"
     tmux resize-pane -t "$parent_pane" -L $((width + 1))
   elif (( pane_left == 0 )); then
     echo 'doing nothing'
@@ -40,7 +46,7 @@ if [[ -n "$viewer_pane" ]] && pane_exists "$viewer_pane"; then
     left_pane=$(pane_to_left)
     shared_lhs_panes=$(shared_lhs_panes)
     if [[ -n $left_pane && -z $shared_lhs_panes ]]; then
-      echo "moving left pane: '$left_pane'" >> ~/.tmux/hook.log
+      log "moving left pane: '$left_pane'"
       tmux resize-pane -t "$left_pane" -L $((width + 1))
     fi
   fi
@@ -56,7 +62,7 @@ else
     tmux split-window -h -b -P -F '#{pane_id}' -l "$width" \
       -c '#{pane_current_path}' \
       -e "PARENT_PANE=$parent_pane" \
-      -e "EDITOR=$FILE_TREE_EDITOR" \
+      -e "EDITOR=$FILE_TREE_OPENER" \
       -e "ON_EXIT=$TOGGLE_PATH" \
       ${FILE_TREE_VIEWER:=bt}
       # 'sh -lc "echo PARENT_PANE=$PARENT_PANE; echo on_exit=$ON_EXIT; read -r _"'
