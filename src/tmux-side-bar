@@ -1,8 +1,6 @@
 #!/bin/zsh
 set -ex
 
-IFS=','
-
 width=30
 
 # Log location (override with TMUX_SIDE_BAR_LOG). Ensure the dir exists and
@@ -28,7 +26,7 @@ shared_lhs_panes() {
       'cur_id!=$1 && cur_left==$2 { print $1 }'
 }
 
-read viewer_pane parent_pane pane_left pane_right pane_top pane_bottom window_height window_width <<< \
+IFS=, read viewer_pane parent_pane pane_left pane_right pane_top pane_bottom window_height window_width <<< \
   "$(tmux display-message -p "#{@viewer_pane},#{@parent_pane},#{pane_left},#{pane_right},#{pane_top},#{pane_bottom},#{window_height},#{window_width}")"
 
 if [[ -n "$viewer_pane" ]] && pane_exists "$viewer_pane"; then
@@ -65,9 +63,7 @@ else
       -e "EDITOR=$FILE_TREE_OPENER" \
       -e "ON_EXIT=$TOGGLE_PATH" \
       ${FILE_TREE_VIEWER:=bt}
-      # 'sh -lc "echo PARENT_PANE=$PARENT_PANE; echo on_exit=$ON_EXIT; read -r _"'
   )"
-  # 'sh -lc "echo PARENT_PANE=$PARENT_PANE; echo EDITOR=$EDITOR; read -r _"'
   tmux set-option -p -t "$parent_pane" @viewer_pane "$new_pane"
   tmux set-option -p -t "$parent_pane" @parent_pane "$parent_pane"
 

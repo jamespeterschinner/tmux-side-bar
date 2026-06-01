@@ -1,8 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
-# Output format: pane_id<TAB>@dependant_pane
-tmux list-panes -F "#{pane_id},#{@dependant_pane}" \
+# Output format: pane_id,@dependant_pane
+# -a lists panes across all windows/sessions: the hook can fire while focus is
+# in a different window than the viewer/parent, so a window-local list is unreliable.
+tmux list-panes -a -F "#{pane_id},#{@dependant_pane}" \
   | awk -F',' '
       {
         pane_id = $1
@@ -30,6 +32,7 @@ tmux list-panes -F "#{pane_id},#{@dependant_pane}" \
     ' \
   | while IFS= read -r orphan; do
       [ -n "$orphan" ] || continue
-      tmux kill-pane -t "$orphan"
+      # Best-effort: a racing/already-gone pane must not abort cleanup (set -e).
+      tmux kill-pane -t "$orphan" || true
     done
 

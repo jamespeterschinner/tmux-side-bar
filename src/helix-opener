@@ -110,6 +110,15 @@ resolve_path() {
   fi
 }
 
+# Single-quote a string so it survives both shell word-splitting and Helix's
+# shellwords parsing (both treat unescaped spaces as argument separators).
+# Each embedded ' is rewritten to the standard '\'' close/escape/reopen idiom.
+shell_quote() {
+  local s="$1"
+  s=${s//\'/\'\\\'\'}
+  printf "'%s'" "$s"
+}
+
 open_in_running_helix() {
   local pane="$1"
   local path="$2"
@@ -120,23 +129,24 @@ open_in_running_helix() {
 
   # Switch to normal mode, then command mode
   tmux_send_key "$pane" Escape
-  tmux_send_literal "$pane" ":open $p"
+  tmux_send_literal "$pane" ":open $(shell_quote "$p")"
   tmux_send_key "$pane" Enter
   tmux select-pane -t "$pane"
 }
 
 start_helix_in_pane() {
-  local pane="$1"
-  local path="$2"
-  local p
-  p="$(resolve_path "$path")"
+  local pane="$1"; shift
+  local cmd="$hx_cmd" path p
+  for path in "$@"; do
+    p="$(resolve_path "$path")"
+    cmd="$cmd $(shell_quote "$p")"
+  done
 
-  log "Action: start_helix_in_pane pane=$pane path=$p hx_cmd=$hx_cmd"
+  log "Action: start_helix_in_pane pane=$pane cmd=$cmd"
 
   # If there's a running program, this will type into it.
   # You can optionally send C-c first if you want.
-  tmux_send_literal "$pane" "$hx_cmd "
-  tmux_send_literal "$pane" "$p"
+  tmux_send_literal "$pane" "$cmd"
   tmux_send_key "$pane" Enter
 }
 
@@ -167,7 +177,8 @@ main() {
   pid="$(pane_pid "$pane" || true)"
   log "Target pane: $pane pane_current_command='${cmd:-}' pane_pid='${pid:-}'"
 
-  local first=1
+  # Validate every path up front.
+  local paths=() path
   for path in "$@"; do
     log "Processing arg: '$path'"
 
@@ -179,19 +190,21 @@ main() {
       fi
       die "not a text-editable file: $path (set OPENER_FALLBACK to handle these)"
     fi
-
-    # Refresh command each time: the pane might have changed.
-    cmd="$(pane_current_cmd "$pane" || true)"
-    log "Pane command before open: '${cmd:-}' (arg='$path')"
-
-    if [[ "$cmd" == "hx" || "$cmd" == "helix" ]]; then
-      open_in_running_helix "$pane" "$path"
-    else
-      start_helix_in_pane "$pane" "$path"
-    fi
-
-    first=0
+    paths+=("$path")
   done
+
+  # Decide once, based on the command captured above. send-keys is async, so
+  # re-checking pane_current_command per file would still see the shell before
+  # the first launched hx has exec'd — typing the next file into the shell.
+  # If helix is already running, open each file in it; otherwise launch hx once
+  # with all files.
+  if [[ "$cmd" == "hx" || "$cmd" == "helix" ]]; then
+    for path in "${paths[@]}"; do
+      open_in_running_helix "$pane" "$path"
+    done
+  else
+    start_helix_in_pane "$pane" "${paths[@]}"
+  fi
 
   log "Done."
 }
