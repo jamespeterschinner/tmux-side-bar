@@ -26,6 +26,41 @@ shared_lhs_panes() {
       'cur_id!=$1 && cur_left==$2 { print $1 }'
 }
 
+# Read the absolute path of the file currently open in a helix pane.
+# Sends a :sh command into helix that resolves %{buffer_name} (shell-escaped
+# by helix >= 25.01) to an absolute path, writes it to a temp file, then
+# signals a tmux channel. We block on that channel instead of polling, so no
+# sleep/poll loop is needed. Returns "" for non-helix panes or scratch buffers.
+helix_open_file() {
+  local pane="$1"
+  local cmd
+  cmd="$(tmux display-message -p -t "$pane" '#{pane_current_command}')"
+  case "$cmd" in
+    hx|helix) ;;
+    *) return 0 ;;
+  esac
+
+  local tmpfile chan
+  tmpfile="$(mktemp "${TMPDIR:-/tmp}/tmux-side-bar.XXXXXX")"
+  chan="tmux-side-bar-$$"
+
+  # Escape to normal mode first (mirrors helix-opener), then run the shell
+  # command inside helix. realpath runs in helix's working dir; the trailing
+  # `tmux wait-for -S` fires even when realpath fails (scratch buffer), so the
+  # waiter below never hangs as long as helix executes the command line.
+  tmux send-keys -t "$pane" Escape
+  tmux send-keys -t "$pane" -l -- ":sh realpath -- %{buffer_name} > $tmpfile 2>/dev/null; tmux wait-for -S $chan"
+  tmux send-keys -t "$pane" Enter
+
+  # Block until helix signals the channel (no external sleep/poll needed).
+  tmux wait-for "$chan"
+
+  # $(<file) is a zsh builtin read (no external `cat`/`head`).
+  local path="$(<"$tmpfile")"
+  rm -f "$tmpfile" 2>/dev/null || true
+  printf '%s' "${path%%$'\n'*}"
+}
+
 IFS=, read viewer_pane parent_pane pane_left pane_right pane_top pane_bottom window_height window_width <<< \
   "$(tmux display-message -p "#{@viewer_pane},#{@parent_pane},#{pane_left},#{pane_right},#{pane_top},#{pane_bottom},#{window_height},#{window_width}")"
 
@@ -56,12 +91,18 @@ else
 
   TOGGLE_PATH="$(realpath "$(command -v -- "$0")")"
 
+  initial_file="$(helix_open_file "$parent_pane")"
+
+  bt_env=()
+  [[ -n "$initial_file" ]] && bt_env=(-e "BT_INITIAL_PATH=$initial_file")
+
   new_pane="$(
     tmux split-window -h -b -P -F '#{pane_id}' -l "$width" \
       -c '#{pane_current_path}' \
       -e "PARENT_PANE=$parent_pane" \
-      -e "EDITOR=$FILE_TREE_OPENER" \
+      -e "EDITOR=$EDITOR" \
       -e "ON_EXIT=$TOGGLE_PATH" \
+      "${bt_env[@]}" \
       ${FILE_TREE_VIEWER:=bt}
   )"
   tmux set-option -p -t "$parent_pane" @viewer_pane "$new_pane"
